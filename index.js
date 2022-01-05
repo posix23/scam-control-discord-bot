@@ -1,73 +1,69 @@
-const { Client, MessageEmbed } = require('discord.js');
+// Import modules
+const Commando = require('discord.js-commando');
+const path = require('path');
+const sqlite3 = require('sqlite3').verbose();
+const fs = require('fs').promises;
+
+// Import config file
 const config = require('./config');
-const commands = require('./help');
 
-let bot = new Client({
-  fetchAllMembers: true, // Remove this if the bot is in large guilds.
-  presence: {
-    status: 'online',
-    activity: {
-      name: `${config.prefix}help`,
-      type: 'LISTENING'
-    }
+// Initialize
+let db = new sqlite3.Database(path.join(__dirname, './db/links.db'), async err => {
+  if (err) await fs.appendFile(path.join(__dirname, './logs/errors.txt'), err.message);
+});
+
+db.serialize(() => {
+  db.run(`CREATE TABLE IF NOT EXISTS blacklist (
+    link VARCHAR(500) PRIMARY KEY
+  )`);
+});
+
+db.close(async err => {
+  if (err) await fs.appendFile(path.join(__dirname, './logs/errors.txt'), err.message);
+});
+
+const bot = new Commando.Client({
+  owner: config.owner,
+  commandPrefix: config.prefix
+});
+
+bot.registry
+  // Custom command groups
+  .registerGroups([
+    ['config', 'Used for configuring the bot']
+  ])
+  // Registers all built-in groups, commands, and argument types
+  .registerDefaults()
+  // Register commands in the /commands directory
+  .registerCommandsIn(path.join(__dirname, "commands"));
+
+// Turn on bot
+bot.on('ready', async () => {
+  await fs.appendFile(path.join(__dirname, './logs/init.txt'), `Logged in as ${bot.user.tag}.`);
+  console.log(`Logged in as ${bot.user.tag}.`);
+  bot.user.setActivity(`On active duty!`, {type: 'CUSTOM_STATUS'});
+});
+
+// What to do
+bot.on('message', msg => {
+  message = msg.content;
+  if (message.indexOf('%add') === -1 && message.indexOf('%addlink') === -1 && message.indexOf('http') !== -1) {
+    let q = `SELECT link
+           FROM blacklist
+           WHERE link = ?`;
+
+    let dbMessage = new sqlite3.Database(path.join(__dirname, './db/links.db'), err => {
+      if (err) throw err.message;
+    });
+
+    dbMessage.get(q, [message], async (err, row) => {
+      if (err) await fs.appendFile(path.join(__dirname, './logs/errors.txt'), err.message);
+      else if (row.link) {
+        msg.channel.send('Scam!!!');
+        msg.delete();
+      }
+    });
   }
 });
 
-bot.on('ready', () => console.log(`Logged in as ${bot.user.tag}.`));
-
-bot.on('message', async message => {
-  // Check for command
-  if (message.content.startsWith(config.prefix)) {
-    let args = message.content.slice(config.prefix.length).split(' ');
-    let command = args.shift().toLowerCase();
-
-    switch (command) {
-
-      case 'ping':
-        let msg = await message.reply('Pinging...');
-        await msg.edit(`PONG! Message round-trip took ${Date.now() - msg.createdTimestamp}ms.`)
-        break;
-
-      case 'say':
-      case 'repeat':
-        if (args.length > 0)
-          message.channel.send(args.join(' '));
-        else
-          message.reply('You did not send a message to repeat, cancelling command.')
-        break
-
-      /* Unless you know what you're doing, don't change this command. */
-      case 'help':
-        let embed =  new MessageEmbed()
-          .setTitle('HELP MENU')
-          .setColor('GREEN')
-          .setFooter(`Requested by: ${message.member ? message.member.displayName : message.author.username}`, message.author.displayAvatarURL())
-          .setThumbnail(bot.user.displayAvatarURL());
-        if (!args[0])
-          embed
-            .setDescription(Object.keys(commands).map(command => `\`${command.padEnd(Object.keys(commands).reduce((a, b) => b.length > a.length ? b : a, '').length)}\` :: ${commands[command].description}`).join('\n'));
-        else {
-          if (Object.keys(commands).includes(args[0].toLowerCase()) || Object.keys(commands).map(c => commands[c].aliases || []).flat().includes(args[0].toLowerCase())) {
-            let command = Object.keys(commands).includes(args[0].toLowerCase())? args[0].toLowerCase() : Object.keys(commands).find(c => commands[c].aliases && commands[c].aliases.includes(args[0].toLowerCase()));
-            embed
-              .setTitle(`COMMAND - ${command}`)
-
-            if (commands[command].aliases)
-              embed.addField('Command aliases', `\`${commands[command].aliases.join('`, `')}\``);
-            embed
-              .addField('DESCRIPTION', commands[command].description)
-              .addField('FORMAT', `\`\`\`${config.prefix}${commands[command].format}\`\`\``);
-          } else {
-            embed
-              .setColor('RED')
-              .setDescription('This command does not exist. Please use the help command without specifying any commands to list them all.');
-          }
-        }
-        message.channel.send(embed);
-        break;
-    }
-  }
-});
-
-require('./server')();
 bot.login(config.token);
